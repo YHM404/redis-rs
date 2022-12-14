@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package redis_service;
+
+message Entry {
+    bytes value = 1;
+}
+
+message SetRequest {
+    string key = 1;
+    Entry entry = 2;
+}
+
+message SetResponse {
+    Entry entry = 1;
+}
+
+message GetRequest {
+    string key = 1;
+}
+
+message GetResponse {
+    Entry entry = 1;
+}
+
+message RemoveRequest {
+    string key = 1;
+}
+
+message RemoveResponse {
+    Entry entry = 1;
+}
+
+service RedisService {
+    // Set entry associated with the key. Returns the old entry if there was one.
+    rpc set(SetRequest) returns (SetResponse);
+    // Get entry associated with the key. Returns none if there was not exist.
+    rpc get(GetRequest) returns (GetResponse);
+    // Remove the old entry associated with the key. Returns none if there was not exist.
+    rpc remove(RemoveRequest) returns (RemoveResponse);
+}
