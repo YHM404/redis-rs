@@ -7,6 +7,14 @@ pub struct State {
 }
 
 impl State {
+    pub fn new() -> Self {
+        Self {
+            entries: DashMap::new(),
+        }
+    }
+}
+
+impl State {
     /// Get the entry associated with the key.
     pub fn get(&self, key: impl AsRef<str>) -> Option<Entry> {
         self.entries

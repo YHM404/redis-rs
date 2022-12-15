@@ -1,18 +1,38 @@
+use std::net::SocketAddr;
+
 use async_trait::async_trait;
-use tonic::Response;
+use tonic::{transport::Server, Response};
 
 use crate::{
     protobuf::{
         self,
         redis_service::{
-            GetRequest, GetResponse, RemoveRequest, RemoveResponse, SetRequest, SetResponse,
+            redis_service_server::RedisServiceServer, GetRequest, GetResponse, RemoveRequest,
+            RemoveResponse, SetRequest, SetResponse,
         },
     },
     store::state::State,
 };
 
-struct RedisService {
+/// Used for processing requests from clients.
+pub struct RedisService {
     state: State,
+}
+
+impl RedisService {
+    pub fn new() -> Self {
+        Self {
+            state: State::new(),
+        }
+    }
+
+    pub async fn serve(self, addr: SocketAddr) {
+        tokio::spawn(
+            Server::builder()
+                .add_service(RedisServiceServer::new(self))
+                .serve(addr),
+        );
+    }
 }
 
 #[async_trait]
