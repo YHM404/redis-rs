@@ -32,3 +32,58 @@ impl State {
         self.entries.remove(key.as_ref()).map(|(_, entry)| entry)
     }
 }
+
+#[cfg(test)]
+mod test {
+    use crate::{protobuf::redis_service::Entry, store::state::State};
+
+    #[test]
+    fn test_set_entry() {
+        let state = State::new();
+
+        let old_entry = state.set("key_1".to_string(), Entry::new(vec![0, 1, 2]));
+        assert!(old_entry.is_none());
+
+        let old_entry = state.set("key_2".to_string(), Entry::new(vec![3, 4, 5]));
+        assert!(old_entry.is_none());
+
+        let old_entry = state.set("key_1".to_string(), Entry::new(vec![]));
+        assert_eq!(old_entry, Some(Entry::new(vec![0, 1, 2])));
+
+        let old_entry = state.set("key_2".to_string(), Entry::new(vec![]));
+        assert_eq!(old_entry, Some(Entry::new(vec![3, 4, 5])));
+    }
+
+    #[test]
+    fn test_get_entry() {
+        let state = State::new();
+
+        state.set("key_1".to_string(), Entry::new(vec![0, 1, 2]));
+        state.set("key_2".to_string(), Entry::new(vec![3, 4, 5]));
+
+        let entry = state.get("key_1");
+        assert_eq!(entry, Some(Entry::new(vec![0, 1, 2])));
+
+        let entry = state.get("key_2");
+        assert_eq!(entry, Some(Entry::new(vec![3, 4, 5])));
+
+        let entry = state.get("key_3");
+        assert!(entry.is_none());
+    }
+
+    #[test]
+    fn test_remove_entry() {
+        let state = State::new();
+
+        state.set("key_1".to_string(), Entry::new(vec![0, 1, 2]));
+
+        let old_entry = state.remove("key_1");
+        assert_eq!(old_entry, Some(Entry::new(vec![0, 1, 2])));
+
+        let old_entry = state.remove("key_1");
+        assert!(old_entry.is_none());
+
+        let old_entry = state.remove("key_2");
+        assert!(old_entry.is_none());
+    }
+}
