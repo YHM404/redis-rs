@@ -15,17 +15,13 @@ use crate::{
 };
 
 /// Used for processing requests from clients.
+#[derive(Debug, Default)]
 pub struct RedisService {
     state: State,
 }
 
 impl RedisService {
-    pub fn new() -> Self {
-        Self {
-            state: State::new(),
-        }
-    }
-
+    /// Start serving a RedisService as a tokio task.
     pub async fn serve(self, addr: SocketAddr) {
         tokio::spawn(
             Server::builder()
@@ -42,8 +38,8 @@ impl protobuf::redis_service::redis_service_server::RedisService for RedisServic
         get_request: tonic::Request<GetRequest>,
     ) -> Result<tonic::Response<GetResponse>, tonic::Status> {
         let get_request = get_request.into_inner();
-        let entry = self.state.get(&get_request.key);
-        Ok(Response::new(GetResponse { entry: entry }))
+        let entry = self.state.get(get_request.key);
+        Ok(Response::new(GetResponse { entry }))
     }
 
     async fn set(
@@ -53,7 +49,7 @@ impl protobuf::redis_service::redis_service_server::RedisService for RedisServic
         let SetRequest { key, entry } = set_request.into_inner();
         let old_entry = self.state.set(
             key,
-            entry.ok_or(tonic::Status::data_loss("Entry not exists."))?,
+            entry.ok_or_else(|| tonic::Status::data_loss("Entry not exists."))?,
         );
         Ok(Response::new(SetResponse { entry: old_entry }))
     }

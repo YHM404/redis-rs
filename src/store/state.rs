@@ -2,16 +2,9 @@ use dashmap::DashMap;
 
 use crate::protobuf::redis_service::Entry;
 
+#[derive(Debug, Default)]
 pub struct State {
     entries: DashMap<String, Entry>,
-}
-
-impl State {
-    pub fn new() -> Self {
-        Self {
-            entries: DashMap::new(),
-        }
-    }
 }
 
 impl State {
@@ -39,7 +32,7 @@ mod test {
 
     #[test]
     fn test_set_entry() {
-        let state = State::new();
+        let state = State::default();
 
         let old_entry = state.set("key_1".to_string(), Entry::new(vec![0, 1, 2]));
         assert!(old_entry.is_none());
@@ -56,7 +49,7 @@ mod test {
 
     #[test]
     fn test_get_entry() {
-        let state = State::new();
+        let state = State::default();
 
         state.set("key_1".to_string(), Entry::new(vec![0, 1, 2]));
         state.set("key_2".to_string(), Entry::new(vec![3, 4, 5]));
@@ -73,7 +66,7 @@ mod test {
 
     #[test]
     fn test_remove_entry() {
-        let state = State::new();
+        let state = State::default();
 
         state.set("key_1".to_string(), Entry::new(vec![0, 1, 2]));
 

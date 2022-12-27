@@ -8,7 +8,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(true)
         .compile_well_known_types(true)
         .out_dir("src/protobuf")
-        .compile_with_config(prost_config(), &["redis_service.proto"], &["protobuf"])?;
+        .compile_with_config(
+            prost_config(),
+            &["redis_service.proto", "proxy_service.proto"],
+            &["protobuf"],
+        )?;
     Ok(())
 }
 
