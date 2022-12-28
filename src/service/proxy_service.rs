@@ -11,8 +11,8 @@ use tonic::{
 
 use crate::protobuf::{
     proxy_service::{
-        proxy_manage_service_server::ProxyManageService, GetStateResponse, NodeInfo, RedisNodeInfo,
-        State, SyncRequest,
+        proxy_manage_service_server::ProxyManageService, GetStateResponse, RedisNodeInfo, State,
+        SyncRequest,
     },
     redis_service::{
         redis_service_client::RedisServiceClient, redis_service_server::RedisService, GetRequest,
@@ -20,7 +20,7 @@ use crate::protobuf::{
     },
 };
 
-const SLOTS_LENGTH: usize = 1024;
+pub const SLOTS_LENGTH: usize = 1024;
 
 struct Slot {
     node_id: NodeId,
@@ -44,9 +44,7 @@ impl Router {
             let slot_range = redis_node_info
                 .slot_range
                 .ok_or_else(|| Status::invalid_argument("SlotRange为空"))?;
-            let NodeInfo { id, addr } = redis_node_info
-                .node_info
-                .ok_or_else(|| Status::invalid_argument("NodeInfo为空"))?;
+            let RedisNodeInfo { id, addr, .. } = redis_node_info;
             let channel = Endpoint::new(addr)
                 .or(Err(Status::unavailable("与redis节点建立Channel失败")))?
                 .connect_lazy();

@@ -4,11 +4,7 @@ package proxy_service;
 
 import "google/protobuf/Empty.proto";
 
-// 表示一个节点的基本信息
-message NodeInfo {
-    string id = 1;
-    string addr = 2;
-}
+
 
 // 用于表示一个redis节点中被分配的slot的范围，左闭右开区间
 message SlotRange {
@@ -18,12 +14,14 @@ message SlotRange {
 
 // 表示一个redis节点的信息
 message RedisNodeInfo {
-    NodeInfo node_info = 1;
-    SlotRange slot_range = 2;
+    string id = 1;
+    string addr = 2;
+    SlotRange slot_range = 3;
 }
 
 message ProxyNodeInfo {
-    NodeInfo node_info = 1;
+    string id = 1;
+    string addr = 2;
 }
 
 message SyncRequest {

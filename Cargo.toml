@@ -5,6 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bin]]
+name = "manage-client"
+path = "src/bin/manage_client.rs"
+
 [dependencies]
 anyhow = "1.0.68"
 async-trait = "0.1.59"
@@ -12,6 +16,8 @@ async-trait = "0.1.59"
 crc = "3.0"
 
 dashmap = "5.4.0"
+
+etcd-client = "0.10.2"
 
 openraft = "0.7.3"
 
