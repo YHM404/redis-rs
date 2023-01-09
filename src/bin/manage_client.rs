@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
-use etcd_client::{Client, GetOptions};
+use etcd_client::{Client, DeleteOptions, GetOptions};
 use prost::Message;
 use redis_rs::{
     protobuf::proxy_service::{
@@ -25,6 +25,7 @@ struct Cli {
 #[derive(Debug, Subcommand, Clone)]
 enum Cmd {
     Add { id: String, addr: String },
+    Remove { id: String },
     Other,
 }
 
@@ -40,7 +41,7 @@ async fn main() -> Result<()> {
     match cli.sub_cmd {
         Cmd::Add { id, addr } => {
             log::info!(
-                "执行Add命令，向集群中添加redis节点id: {:?}, addr: {:?}",
+                "执行Add命令, 向集群中添加redis节点id: {:?}, addr: {:?}",
                 id,
                 addr
             );
@@ -51,6 +52,11 @@ async fn main() -> Result<()> {
                     slot_range: None,
                 })
                 .await?;
+        }
+
+        Cmd::Remove { id } => {
+            log::info!("执行Remove命令, 移除redis节点 id: {:?}", id);
+            manage_client.remove_redis_node(id).await?;
         }
 
         _ => {
@@ -82,6 +88,51 @@ impl ManageClient {
         );
 
         reallocate_slots(&mut redis_node_infos)?;
+        self.register_redis_nodes(&mut redis_node_infos).await?;
+        log::info!("集群中已注册的redis节点: {:?}", redis_node_infos);
+
+        self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
+        Ok(())
+    }
+
+    async fn remove_redis_node(&mut self, id: String) -> Result<()> {
+        // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
+        let mut redis_node_infos = self.get_redis_node_infos().await?;
+        redis_node_infos.remove(&format!("{}:{}", REDIS_NODE_ID_PREFIX, id));
+        self.etcd_client
+            .delete(
+                format!("{}:{}", REDIS_NODE_ID_PREFIX, id),
+                Some(DeleteOptions::new().with_all_keys()),
+            )
+            .await?;
+
+        reallocate_slots(&mut redis_node_infos)?;
+        self.register_redis_nodes(&mut redis_node_infos).await?;
+        log::info!("集群中已注册的redis节点: {:?}", redis_node_infos);
+
+        self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
+        Ok(())
+    }
+
+    async fn get_proxy_node_infos(&mut self) -> Result<BTreeMap<String, ProxyNodeInfo>> {
+        self.etcd_client
+            .get(PROXY_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
+            .await?
+            .kvs()
+            .into_iter()
+            .map(|kv| {
+                Ok((
+                    kv.key_str()?.to_string(),
+                    ProxyNodeInfo::decode(kv.value()).context("ProxyNodeInfo反序列化错误")?,
+                ))
+            })
+            .collect::<Result<BTreeMap<String, ProxyNodeInfo>>>()
+    }
+
+    async fn register_redis_nodes(
+        &mut self,
+        redis_node_infos: &mut BTreeMap<String, RedisNodeInfo>,
+    ) -> Result<()> {
         for (_, redis_node_info) in redis_node_infos.iter_mut() {
             let node_id = redis_node_info.id.clone();
             self.etcd_client
@@ -92,8 +143,27 @@ impl ManageClient {
                 )
                 .await?;
         }
-        log::info!("集群中已注册的redis节点: {:?}", redis_node_infos);
+        Ok(())
+    }
+    async fn get_redis_node_infos(&mut self) -> Result<BTreeMap<String, RedisNodeInfo>> {
+        self.etcd_client
+            .get(REDIS_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
+            .await?
+            .kvs()
+            .into_iter()
+            .map(|kv| {
+                Ok((
+                    kv.key_str()?.to_string(),
+                    RedisNodeInfo::decode(kv.value()).context("RedisNodeInfo反序列化错误")?,
+                ))
+            })
+            .collect::<Result<BTreeMap<String, RedisNodeInfo>>>()
+    }
 
+    async fn sync_all_proxy_nodes(
+        &mut self,
+        redis_node_infos: &mut BTreeMap<String, RedisNodeInfo>,
+    ) -> Result<()> {
         let proxy_node_infos = self.get_proxy_node_infos().await?;
         // 向所有代理节点广播Expired通知
         let mut proxy_clients = Vec::with_capacity(proxy_node_infos.len());
@@ -113,36 +183,6 @@ impl ManageClient {
                 .await?;
         }
         Ok(())
-    }
-
-    async fn get_proxy_node_infos(&mut self) -> Result<BTreeMap<String, ProxyNodeInfo>> {
-        self.etcd_client
-            .get(PROXY_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
-            .await?
-            .kvs()
-            .into_iter()
-            .map(|kv| {
-                Ok((
-                    kv.key_str()?.to_string(),
-                    ProxyNodeInfo::decode(kv.value()).context("ProxyNodeInfo反序列化错误")?,
-                ))
-            })
-            .collect::<Result<BTreeMap<String, ProxyNodeInfo>>>()
-    }
-
-    async fn get_redis_node_infos(&mut self) -> Result<BTreeMap<String, RedisNodeInfo>> {
-        self.etcd_client
-            .get(REDIS_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
-            .await?
-            .kvs()
-            .into_iter()
-            .map(|kv| {
-                Ok((
-                    kv.key_str()?.to_string(),
-                    RedisNodeInfo::decode(kv.value()).context("RedisNodeInfo反序列化错误")?,
-                ))
-            })
-            .collect::<Result<BTreeMap<String, RedisNodeInfo>>>()
     }
 }
 
