@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
 use etcd_client::{Client, GetOptions};
@@ -65,14 +67,12 @@ impl ManageClient {
 
     /// 向redis集群添加一个节点
     async fn add_redis_node(&mut self, redis_node_info: RedisNodeInfo) -> Result<()> {
-        // TODO: 暂时不支持添加id重复的节点
-
         // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
         let mut redis_node_infos = self.get_redis_node_infos().await?;
-        redis_node_infos.push(redis_node_info);
+        redis_node_infos.insert(redis_node_info.id.clone(), redis_node_info);
 
         reallocate_slots(&mut redis_node_infos)?;
-        for redis_node_info in redis_node_infos.iter_mut() {
+        for (_, redis_node_info) in redis_node_infos.iter_mut() {
             let node_id = redis_node_info.id.clone();
             self.etcd_client
                 .put(
@@ -86,7 +86,7 @@ impl ManageClient {
         let proxy_node_infos = self.get_proxy_node_infos().await?;
         // 向所有代理节点广播Expired通知
         let mut proxy_clients = Vec::with_capacity(proxy_node_infos.len());
-        for proxy_node_info in proxy_node_infos {
+        for (_, proxy_node_info) in proxy_node_infos {
             let addr = proxy_node_info.addr.clone();
             let mut proxy_client = ProxyManageServiceClient::connect(addr).await?;
             proxy_client.expired(Request::new(())).await?;
@@ -97,44 +97,53 @@ impl ManageClient {
         for proxy_client in proxy_clients.iter_mut() {
             proxy_client
                 .sync(Request::new(SyncRequest {
-                    redis_node_infos: redis_node_infos.clone(),
+                    redis_node_infos: redis_node_infos.clone().into_values().collect(),
                 }))
                 .await?;
         }
         Ok(())
     }
 
-    async fn get_proxy_node_infos(&mut self) -> Result<Vec<ProxyNodeInfo>> {
+    async fn get_proxy_node_infos(&mut self) -> Result<BTreeMap<String, ProxyNodeInfo>> {
         self.etcd_client
             .get(PROXY_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
             .await?
             .kvs()
             .into_iter()
-            .map(|kv| ProxyNodeInfo::decode(kv.value()).context("ProxyNodeInfo反序列化错误"))
-            .collect::<Result<Vec<ProxyNodeInfo>>>()
+            .map(|kv| {
+                Ok((
+                    kv.key_str()?.to_string(),
+                    ProxyNodeInfo::decode(kv.value()).context("ProxyNodeInfo反序列化错误")?,
+                ))
+            })
+            .collect::<Result<BTreeMap<String, ProxyNodeInfo>>>()
     }
 
-    async fn get_redis_node_infos(&mut self) -> Result<Vec<RedisNodeInfo>> {
+    async fn get_redis_node_infos(&mut self) -> Result<BTreeMap<String, RedisNodeInfo>> {
         self.etcd_client
             .get(REDIS_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
             .await?
             .kvs()
             .into_iter()
-            .map(|kv| RedisNodeInfo::decode(kv.value()).context("RedisNodeInfo反序列化错误"))
-            .collect::<Result<Vec<RedisNodeInfo>>>()
+            .map(|kv| {
+                Ok((
+                    kv.key_str()?.to_string(),
+                    RedisNodeInfo::decode(kv.value()).context("RedisNodeInfo反序列化错误")?,
+                ))
+            })
+            .collect::<Result<BTreeMap<String, RedisNodeInfo>>>()
     }
 }
 
 /// 计算redis_nodes应该存放那些slot
-fn reallocate_slots(redis_node_infos: &mut Vec<RedisNodeInfo>) -> Result<()> {
+fn reallocate_slots(redis_node_infos: &mut BTreeMap<String, RedisNodeInfo>) -> Result<()> {
     if redis_node_infos.is_empty() {
         return Err(anyhow!("redis_node_infos不能为空"));
     }
 
     let step = (SLOTS_LENGTH / redis_node_infos.len()) as u64;
-    println!("{}, {}", redis_node_infos.len(), step);
     let mut start_slot_index = 0;
-    for redis_node_info in redis_node_infos.iter_mut() {
+    for (_, redis_node_info) in redis_node_infos.iter_mut() {
         redis_node_info.slot_range = Some(SlotRange {
             start: start_slot_index,
             end: start_slot_index + step,
@@ -142,8 +151,9 @@ fn reallocate_slots(redis_node_infos: &mut Vec<RedisNodeInfo>) -> Result<()> {
         start_slot_index += step;
     }
     redis_node_infos
-        .last_mut()
+        .last_entry()
         .context("redis_node_infos不能为空")?
+        .get_mut()
         .slot_range
         .as_mut()
         .context("slot_range不能为空")?
