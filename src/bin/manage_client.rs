@@ -10,6 +10,7 @@ use redis_rs::{
         SlotRange, SyncRequest,
     },
     service::proxy_service::SLOTS_LENGTH,
+    PROXY_NODE_ID_PREFIX, REDIS_NODE_ID_PREFIX,
 };
 use tonic::Request;
 
@@ -59,9 +60,6 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-
-const REDIS_NODE_ID_PREFIX: &str = "REDIS_NODE";
-const PROXY_NODE_ID_PREFIX: &str = "PROXY_NODE";
 
 struct ManageClient {
     etcd_client: etcd_client::Client,

@@ -1,27 +1,29 @@
-use std::{collections::HashMap, ops::Range};
+use std::{collections::HashMap, net::SocketAddr, ops::Range, sync::Arc};
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use crc::{Crc, CRC_16_IBM_SDLC};
 use tokio::sync::RwLock;
 use tonic::{
-    transport::{Channel, Endpoint},
+    transport::{Channel, Endpoint, Server},
     Request, Response, Status,
 };
 
 use crate::protobuf::{
     proxy_service::{
-        proxy_manage_service_server::ProxyManageService, GetStateResponse, RedisNodeInfo, State,
-        SyncRequest,
+        proxy_manage_service_server::{ProxyManageService, ProxyManageServiceServer},
+        GetStateResponse, RedisNodeInfo, State, SyncRequest,
     },
     redis_service::{
-        redis_service_client::RedisServiceClient, redis_service_server::RedisService, GetRequest,
-        GetResponse, RemoveRequest, RemoveResponse, SetRequest, SetResponse,
+        redis_service_client::RedisServiceClient,
+        redis_service_server::{RedisService, RedisServiceServer},
+        GetRequest, GetResponse, RemoveRequest, RemoveResponse, SetRequest, SetResponse,
     },
 };
 
 pub const SLOTS_LENGTH: usize = 1024;
 
+#[derive(Debug, Clone)]
 struct Slot {
     node_id: NodeId,
 }
@@ -32,12 +34,28 @@ impl Slot {
     }
 }
 
+impl Default for Slot {
+    fn default() -> Self {
+        Self {
+            node_id: "".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct Router {
     slots: [Slot; SLOTS_LENGTH],
     redis_channels: HashMap<NodeId, Channel>,
 }
 
 impl Router {
+    fn new() -> Self {
+        let slots = [(); SLOTS_LENGTH].map(|_| Slot::default());
+        Self {
+            slots,
+            redis_channels: HashMap::new(),
+        }
+    }
     /// 更新路由信息
     fn update_router(&mut self, redis_node_infos: Vec<RedisNodeInfo>) -> Result<()> {
         for redis_node_info in redis_node_infos {
@@ -89,9 +107,28 @@ impl Router {
 }
 
 type NodeId = String;
-struct ProxyNode {
-    state: RwLock<State>,
-    router: RwLock<Router>,
+#[derive(Debug, Clone)]
+pub struct ProxyNode {
+    state: Arc<RwLock<State>>,
+    router: Arc<RwLock<Router>>,
+}
+
+impl ProxyNode {
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(RwLock::new(State::Expired)),
+            router: Arc::new(RwLock::new(Router::new())),
+        }
+    }
+
+    pub async fn serve(self, addr: SocketAddr) {
+        tokio::spawn(
+            Server::builder()
+                .add_service(ProxyManageServiceServer::new(self.clone()))
+                .add_service(RedisServiceServer::new(self))
+                .serve(addr),
+        );
+    }
 }
 
 #[async_trait]
@@ -104,6 +141,7 @@ impl ProxyManageService for ProxyNode {
 
     /// 更新代理节点的路由信息，并将状态更新为Sync，Sync状态的proxy节点可以正常响应客户端的请求
     async fn sync(&self, request: Request<SyncRequest>) -> Result<Response<()>, Status> {
+        log::info!("收到sync请求, {:?}", request);
         let mut state_write_guard = self.state.write().await;
         match *state_write_guard {
             State::Expired => {
@@ -116,9 +154,7 @@ impl ProxyManageService for ProxyNode {
                 *state_write_guard = State::Synced;
                 Ok(Response::new(()))
             }
-            State::Synced => Err(Status::failed_precondition(
-                "当前proxy元数据是Synced状态, 如果需要更新元数据请先将节点设置为Expired",
-            )),
+            State::Synced => Ok(Response::new(())),
         }
     }
 
@@ -137,38 +173,53 @@ impl RedisService for ProxyNode {
         &self,
         request: Request<SetRequest>,
     ) -> Result<Response<SetResponse>, tonic::Status> {
-        Ok(Response::new(
-            self.router
-                .read()
-                .await
-                .forward_set(request.into_inner())
-                .await
-                .map_err(|e| Status::cancelled(format!("SetRequest转发错误: {:?}", e)))?,
-        ))
+        match *self.state.read().await {
+            State::Expired => Err(Status::failed_precondition(
+                "代理节点是过期状态, 不能提供服务",
+            )),
+            State::Synced => Ok(Response::new(
+                self.router
+                    .read()
+                    .await
+                    .forward_set(request.into_inner())
+                    .await
+                    .map_err(|e| Status::cancelled(format!("SetRequest转发错误: {:?}", e)))?,
+            )),
+        }
     }
 
     async fn get(&self, request: Request<GetRequest>) -> Result<Response<GetResponse>, Status> {
-        Ok(Response::new(
-            self.router
-                .read()
-                .await
-                .forward_get(request.into_inner())
-                .await
-                .map_err(|e| Status::cancelled(format!("GetRequest转发错误: {:?}", e)))?,
-        ))
+        match *self.state.read().await {
+            State::Expired => Err(Status::failed_precondition(
+                "代理节点是过期状态, 不能提供服务",
+            )),
+            State::Synced => Ok(Response::new(
+                self.router
+                    .read()
+                    .await
+                    .forward_get(request.into_inner())
+                    .await
+                    .map_err(|e| Status::cancelled(format!("GetRequest转发错误: {:?}", e)))?,
+            )),
+        }
     }
 
     async fn remove(
         &self,
         request: Request<RemoveRequest>,
     ) -> Result<Response<RemoveResponse>, Status> {
-        Ok(Response::new(
-            self.router
-                .read()
-                .await
-                .forward_remove(request.into_inner())
-                .await
-                .map_err(|e| Status::cancelled(format!("RemoveRequest转发错误: {:?}", e)))?,
-        ))
+        match *self.state.read().await {
+            State::Expired => Err(Status::failed_precondition(
+                "代理节点是过期状态, 不能提供服务",
+            )),
+            State::Synced => Ok(Response::new(
+                self.router
+                    .read()
+                    .await
+                    .forward_remove(request.into_inner())
+                    .await
+                    .map_err(|e| Status::cancelled(format!("RemoveRequest转发错误: {:?}", e)))?,
+            )),
+        }
     }
 }
