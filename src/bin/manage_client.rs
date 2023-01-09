@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Context, Result};
-use etcd_client::{Client, DeleteOptions, GetOptions};
+use clap::{Parser, Subcommand};
+use etcd_client::{Client, GetOptions};
 use prost::Message;
 use redis_rs::{
     protobuf::proxy_service::{
@@ -10,21 +11,40 @@ use redis_rs::{
 };
 use tonic::Request;
 
+#[derive(Debug, Parser)]
+#[command(name = "manage client")]
+struct Cli {
+    etcd_addr: String,
+    #[command(subcommand)]
+    sub_cmd: Cmd,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+enum Cmd {
+    Add { id: String, addr: String },
+    Other,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    let mut client = Client::connect(["localhost:2379"], None).await?;
-    client
-        .delete("", Some(DeleteOptions::new().with_all_keys()))
-        .await?;
-    let mut manage_client = ManageClient::new("localhost:2379".to_string()).await?;
-    manage_client
-        .add_redis_node(RedisNodeInfo {
-            id: "id_7".to_string(),
-            addr: "".to_string(),
-            slot_range: None,
-        })
-        .await?;
-    println!("{:?}", manage_client.get_redis_node_infos().await?);
+    let cli = Cli::parse();
+    let mut manage_client = ManageClient::new(cli.etcd_addr).await?;
+
+    match cli.sub_cmd {
+        Cmd::Add { id, addr } => {
+            manage_client
+                .add_redis_node(RedisNodeInfo {
+                    id,
+                    addr,
+                    slot_range: None,
+                })
+                .await?;
+        }
+
+        _ => {
+            panic!("暂时不支持的命令")
+        }
+    }
 
     Ok(())
 }
