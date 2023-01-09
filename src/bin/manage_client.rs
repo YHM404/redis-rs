@@ -29,11 +29,20 @@ enum Cmd {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    simple_logger::SimpleLogger::new()
+        .with_level(log::LevelFilter::Info)
+        .init()?;
+
     let cli = Cli::parse();
     let mut manage_client = ManageClient::new(cli.etcd_addr).await?;
 
     match cli.sub_cmd {
         Cmd::Add { id, addr } => {
+            log::info!(
+                "执行Add命令，向集群中添加redis节点id: {:?}, addr: {:?}",
+                id,
+                addr
+            );
             manage_client
                 .add_redis_node(RedisNodeInfo {
                     id,
@@ -69,7 +78,10 @@ impl ManageClient {
     async fn add_redis_node(&mut self, redis_node_info: RedisNodeInfo) -> Result<()> {
         // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
         let mut redis_node_infos = self.get_redis_node_infos().await?;
-        redis_node_infos.insert(redis_node_info.id.clone(), redis_node_info);
+        redis_node_infos.insert(
+            format!("{}:{}", REDIS_NODE_ID_PREFIX, redis_node_info.id),
+            redis_node_info,
+        );
 
         reallocate_slots(&mut redis_node_infos)?;
         for (_, redis_node_info) in redis_node_infos.iter_mut() {
@@ -82,6 +94,7 @@ impl ManageClient {
                 )
                 .await?;
         }
+        log::info!("集群中已注册的redis节点: {:?}", redis_node_infos);
 
         let proxy_node_infos = self.get_proxy_node_infos().await?;
         // 向所有代理节点广播Expired通知
