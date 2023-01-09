@@ -21,6 +21,12 @@ pub struct RedisService {
 }
 
 impl RedisService {
+    pub fn new() -> Self {
+        Self {
+            state: State::default(),
+        }
+    }
+
     /// Start serving a RedisService as a tokio task.
     pub async fn serve(self, addr: SocketAddr) {
         tokio::spawn(
