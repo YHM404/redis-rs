@@ -82,10 +82,7 @@ impl ManageClient {
     async fn add_redis_node(&mut self, redis_node_info: RedisNodeInfo) -> Result<()> {
         // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
         let mut redis_node_infos = self.get_redis_node_infos().await?;
-        redis_node_infos.insert(
-            format!("{}:{}", REDIS_NODE_ID_PREFIX, redis_node_info.id),
-            redis_node_info,
-        );
+        redis_node_infos.insert(redis_node_info.id.clone(), redis_node_info);
 
         reallocate_slots(&mut redis_node_infos)?;
         self.register_redis_nodes(&mut redis_node_infos).await?;
@@ -152,10 +149,9 @@ impl ManageClient {
             .kvs()
             .into_iter()
             .map(|kv| {
-                Ok((
-                    kv.key_str()?.to_string(),
-                    RedisNodeInfo::decode(kv.value()).context("RedisNodeInfo反序列化错误")?,
-                ))
+                let redis_node_info =
+                    RedisNodeInfo::decode(kv.value()).context("RedisNodeInfo反序列化错误")?;
+                Ok((redis_node_info.id.clone(), redis_node_info))
             })
             .collect::<Result<BTreeMap<String, RedisNodeInfo>>>()
     }
