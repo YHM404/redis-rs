@@ -19,6 +19,5 @@ async fn main() -> Result<()> {
 
     log::info!("redis节点启动, id: {:?}, addr: {:?}", cli.id, cli.grpc_addr);
 
-    RedisService::new().serve(cli.grpc_addr.parse()?).await;
-    Ok(())
+    RedisService::new().serve(cli.grpc_addr.parse()?).await
 }

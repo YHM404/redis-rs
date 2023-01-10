@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use anyhow::Result;
 use async_trait::async_trait;
 use tonic::{transport::Server, Response};
 
@@ -28,12 +29,12 @@ impl RedisService {
     }
 
     /// Start serving a RedisService as a tokio task.
-    pub async fn serve(self, addr: SocketAddr) {
-        tokio::spawn(
-            Server::builder()
-                .add_service(RedisServiceServer::new(self))
-                .serve(addr),
-        );
+    pub async fn serve(self, addr: SocketAddr) -> Result<()> {
+        Server::builder()
+            .add_service(RedisServiceServer::new(self))
+            .serve(addr)
+            .await?;
+        Ok(())
     }
 }
 
