@@ -78,6 +78,10 @@ impl Router {
     fn get_redis_channel_by_key(&self, key: impl AsRef<str>) -> Result<Channel> {
         let crc = Crc::<u16>::new(&CRC_16_IBM_SDLC);
         let slot_index = crc.checksum(key.as_ref().as_bytes()) as usize % SLOTS_LENGTH;
+        log::info!(
+            "转发请求到redis节点, id: {:?}",
+            self.slots[slot_index].node_id
+        );
         self.redis_channels
             .get(&self.slots[slot_index].node_id)
             .context("找不到NodeId对应的Channel")
@@ -86,6 +90,7 @@ impl Router {
 
     /// 转发客户端发来的set请求到对应的redis节点
     async fn forward_set(&self, request: SetRequest) -> Result<SetResponse> {
+        log::info!("转发set请求: {:?}", request);
         let channel = self.get_redis_channel_by_key(&request.key)?;
         let mut client = RedisServiceClient::new(channel);
         Ok(client.set(Request::new(request)).await?.into_inner())
@@ -93,6 +98,7 @@ impl Router {
 
     /// 转发客户端发来的get请求到对应的redis节点
     async fn forward_get(&self, request: GetRequest) -> Result<GetResponse> {
+        log::info!("转发get请求: {:?}", request);
         let channel = self.get_redis_channel_by_key(&request.key)?;
         let mut client = RedisServiceClient::new(channel);
         Ok(client.get(Request::new(request)).await?.into_inner())
@@ -100,6 +106,7 @@ impl Router {
 
     /// 转发客户端发来的remove请求到对应的redis节点
     async fn forward_remove(&self, request: RemoveRequest) -> Result<RemoveResponse> {
+        log::info!("转发remove请求: {:?}", request);
         let channel = self.get_redis_channel_by_key(&request.key)?;
         let mut client = RedisServiceClient::new(channel);
         Ok(client.remove(Request::new(request)).await?.into_inner())
