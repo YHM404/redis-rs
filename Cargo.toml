@@ -23,7 +23,7 @@ etcd-client = "0.10.2"
 
 log = "0.4"
 
-openraft = "0.7.3"
+rand = "0.8.5"
 
 prost = { version = "0.11.0", default-features = false, features = ["prost-derive"] }
 prost-types = "0.11.0"

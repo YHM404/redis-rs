@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use etcd_client::GetOptions;
 use log::info;
 use prost::Message;
+use rand::{seq::SliceRandom, thread_rng};
 use redis_rs::{
     protobuf::{
         proxy_service::ProxyNodeInfo,
@@ -38,9 +39,11 @@ async fn main() -> Result<()> {
 
     let mut redis_client = RedisClient::new(cli.etcd_addr).await?;
     // 向etcd获取当前有哪些代理节点在提供服务
-    let proxy_node_infos = redis_client.get_proxy_node_infos().await?;
+    let mut proxy_node_infos = redis_client.get_proxy_node_infos().await?;
+    // 打乱节点，负载均衡
+    proxy_node_infos.shuffle(&mut thread_rng());
+
     // 遍历所有的代理节点，并向代理节点发送对应请求
-    // TODO: optimize（随机向代理节点发请求，而不是每次从第一个开始发）
     match cli.sub_cmd {
         Cmd::Get { key } => {
             for proxy_node_info in proxy_node_infos {
