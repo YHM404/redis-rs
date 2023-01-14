@@ -24,6 +24,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand, Clone)]
 enum Cmd {
+    ShowProxy,
+    ShowRedis,
     Add { id: String, addr: String },
     Remove { id: String },
     Other,
@@ -59,6 +61,19 @@ async fn main() -> Result<()> {
             manage_client.remove_redis_node(id).await?;
         }
 
+        Cmd::ShowProxy => {
+            log::info!(
+                "执行ShowProxy命令, 展示所有代理节点信息: \n {:?}",
+                manage_client.get_proxy_node_infos().await?
+            );
+        }
+
+        Cmd::ShowRedis => {
+            log::info!(
+                "执行ShowRedis命令, 展示所有Redis节点信息: \n {:?}",
+                manage_client.get_redis_node_infos().await?
+            );
+        }
         _ => {
             panic!("暂时不支持的命令")
         }
@@ -95,7 +110,7 @@ impl ManageClient {
     async fn remove_redis_node(&mut self, id: String) -> Result<()> {
         // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
         let mut redis_node_infos = self.get_redis_node_infos().await?;
-        redis_node_infos.remove(&format!("{}:{}", REDIS_NODE_ID_PREFIX, id));
+        redis_node_infos.remove(&id);
         self.etcd_client
             .delete(
                 format!("{}:{}", REDIS_NODE_ID_PREFIX, id),
