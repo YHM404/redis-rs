@@ -89,3 +89,12 @@ cargo build --release
 ./target/release/redis_client http://localhost:2379 get key1
 2023-01-14T02:51:06.933Z INFO  [redis_client] Get key: "key1", value: None
 ```
+
+## TODO:
+
+- [x]  实现单机redis，基本get/set/remove功能
+- [x]  实现代理节点基本转发功能
+- [x]  实现manage_client管理redis节点功能
+- [x]  实现redis_client访问代理集群
+- [ ]  redis节点主从复制
+- [ ]  ….其他功能没想好
