@@ -26,6 +26,7 @@ struct Cli {
 enum Cmd {
     ShowProxy,
     ShowRedis,
+    Sync,
     Add { id: String, addr: String },
     Remove { id: String },
     Other,
@@ -73,6 +74,14 @@ async fn main() -> Result<()> {
                 "执行ShowRedis命令, 展示所有Redis节点信息: \n {:?}",
                 manage_client.get_redis_node_infos().await?
             );
+        }
+
+        Cmd::Sync => {
+            log::info!("执行Sync命令, 把redis节点信息同步给所有代理节点");
+            let mut redis_node_infos = manage_client.get_redis_node_infos().await?;
+            manage_client
+                .sync_all_proxy_nodes(&mut redis_node_infos)
+                .await?;
         }
         _ => {
             panic!("暂时不支持的命令")
