@@ -31,14 +31,14 @@ async fn main() -> Result<()> {
             format!("{}:{}", PROXY_NODE_ID_PREFIX, cli.id),
             ProxyNodeInfo {
                 id: cli.id,
-                addr: cli.grpc_addr.clone(),
+                addr: format!("http://{}", cli.grpc_addr.clone()),
             }
             .encode_to_vec(),
             None,
         )
         .await?;
 
-    ProxyNode::new().serve(cli.grpc_addr.parse()?).await;
+    ProxyNode::new().serve(cli.grpc_addr.parse()?).await?;
 
     Ok(())
 }

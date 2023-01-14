@@ -121,13 +121,13 @@ impl ProxyNode {
         }
     }
 
-    pub async fn serve(self, addr: SocketAddr) {
-        tokio::spawn(
-            Server::builder()
-                .add_service(ProxyManageServiceServer::new(self.clone()))
-                .add_service(RedisServiceServer::new(self))
-                .serve(addr),
-        );
+    pub async fn serve(self, addr: SocketAddr) -> Result<()> {
+        Server::builder()
+            .add_service(ProxyManageServiceServer::new(self.clone()))
+            .add_service(RedisServiceServer::new(self))
+            .serve(addr)
+            .await?;
+        Ok(())
     }
 }
 
