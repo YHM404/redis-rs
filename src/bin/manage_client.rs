@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::{btree_map, BTreeMap},
+    vec,
+};
 
 use anyhow::{anyhow, Context, Result};
 use clap::{Parser, Subcommand};
@@ -53,6 +56,7 @@ async fn main() -> Result<()> {
                     id,
                     addr,
                     slot_range: None,
+                    slots: vec![],
                 })
                 .await?;
         }
@@ -84,7 +88,7 @@ async fn main() -> Result<()> {
                 .await?;
         }
         _ => {
-            panic!("暂时不支持的命令")
+            log::error!("暂时不支持的命令")
         }
     }
 
@@ -106,33 +110,42 @@ impl ManageClient {
     async fn add_redis_node(&mut self, redis_node_info: RedisNodeInfo) -> Result<()> {
         // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
         let mut redis_node_infos = self.get_redis_node_infos().await?;
-        redis_node_infos.insert(redis_node_info.id.clone(), redis_node_info);
+        if let btree_map::Entry::Vacant(vacant) = redis_node_infos.entry(redis_node_info.id.clone())
+        {
+            vacant.insert(redis_node_info);
+            reallocate_slots(&mut redis_node_infos)?;
+            self.register_redis_nodes(&mut redis_node_infos).await?;
+            self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
 
-        reallocate_slots(&mut redis_node_infos)?;
-        self.register_redis_nodes(&mut redis_node_infos).await?;
-        log::info!("集群中已注册的redis节点: {:?}", redis_node_infos);
-
-        self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
-        Ok(())
+            log::info!(
+                "成功注册新的redis节点, 当前集群redis节点信息: {:?}",
+                redis_node_infos
+            );
+            Ok(())
+        } else {
+            Err(anyhow!("节点已经注册过: {:?}", redis_node_info))
+        }
     }
 
     async fn remove_redis_node(&mut self, id: String) -> Result<()> {
         // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
         let mut redis_node_infos = self.get_redis_node_infos().await?;
-        redis_node_infos.remove(&id);
-        self.etcd_client
-            .delete(
-                format!("{}:{}", REDIS_NODE_ID_PREFIX, id),
-                Some(DeleteOptions::new().with_all_keys()),
-            )
-            .await?;
+        if let Some(removed_redis_node) = redis_node_infos.remove(&id) {
+            self.etcd_client
+                .delete(
+                    format!("{}:{}", REDIS_NODE_ID_PREFIX, id),
+                    Some(DeleteOptions::new().with_all_keys()),
+                )
+                .await?;
 
-        reallocate_slots(&mut redis_node_infos)?;
-        self.register_redis_nodes(&mut redis_node_infos).await?;
-        log::info!("集群中已注册的redis节点: {:?}", redis_node_infos);
-
-        self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
-        Ok(())
+            reallocate_slots(&mut redis_node_infos)?;
+            self.register_redis_nodes(&mut redis_node_infos).await?;
+            self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
+            log::info!("redis节点已经从集群中移除: {:?}", removed_redis_node);
+            Ok(())
+        } else {
+            Err(anyhow!("要移除的节点不存在: id = {:?}", id))
+        }
     }
 
     async fn get_proxy_node_infos(&mut self) -> Result<BTreeMap<String, ProxyNodeInfo>> {

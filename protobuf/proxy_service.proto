@@ -12,11 +12,17 @@ message SlotRange {
     uint64 end = 2;
 }
 
+// 用于表示一个redis节点中被分配的slot
+message Slot {
+    uint64 id = 1;
+}
+
 // 表示一个redis节点的信息
 message RedisNodeInfo {
     string id = 1;
     string addr = 2;
     SlotRange slot_range = 3;
+    repeated Slot slots = 4;
 }
 
 message ProxyNodeInfo {
