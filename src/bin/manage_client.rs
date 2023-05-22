@@ -114,7 +114,7 @@ impl ManageClient {
         {
             vacant.insert(redis_node_info);
             reallocate_slots(&mut redis_node_infos)?;
-            self.register_redis_nodes(&mut redis_node_infos).await?;
+
             self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
 
             log::info!(
@@ -139,7 +139,6 @@ impl ManageClient {
                 .await?;
 
             reallocate_slots(&mut redis_node_infos)?;
-            self.register_redis_nodes(&mut redis_node_infos).await?;
             self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
             log::info!("redis节点已经从集群中移除: {:?}", removed_redis_node);
             Ok(())
@@ -165,9 +164,9 @@ impl ManageClient {
 
     async fn register_redis_nodes(
         &mut self,
-        redis_node_infos: &mut BTreeMap<String, RedisNodeInfo>,
+        redis_node_infos: &BTreeMap<String, RedisNodeInfo>,
     ) -> Result<()> {
-        for (_, redis_node_info) in redis_node_infos.iter_mut() {
+        for (_, redis_node_info) in redis_node_infos {
             let node_id = redis_node_info.id.clone();
             self.etcd_client
                 .put(
@@ -179,6 +178,7 @@ impl ManageClient {
         }
         Ok(())
     }
+
     async fn get_redis_node_infos(&mut self) -> Result<BTreeMap<String, RedisNodeInfo>> {
         self.etcd_client
             .get(REDIS_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
@@ -195,7 +195,7 @@ impl ManageClient {
 
     async fn sync_all_proxy_nodes(
         &mut self,
-        redis_node_infos: &mut BTreeMap<String, RedisNodeInfo>,
+        redis_node_infos: &BTreeMap<String, RedisNodeInfo>,
     ) -> Result<()> {
         let proxy_node_infos = self.get_proxy_node_infos().await?;
         // 向所有代理节点广播Expired通知
@@ -206,6 +206,8 @@ impl ManageClient {
             proxy_client.expired(Request::new(())).await?;
             proxy_clients.push(proxy_client);
         }
+
+        self.register_redis_nodes(redis_node_infos).await?;
 
         // 向所有代理节点广播Sync请求
         for proxy_client in proxy_clients.iter_mut() {
