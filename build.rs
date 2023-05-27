@@ -10,7 +10,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .out_dir("src/protobuf")
         .compile_with_config(
             prost_config(),
-            &["redis_service.proto", "proxy_service.proto"],
+            &["redis_service.proto", "proxy_service.proto", "common.proto"],
             &["protobuf"],
         )?;
     Ok(())

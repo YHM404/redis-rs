@@ -1,113 +1,45 @@
-use std::{
-    collections::{btree_map, BTreeMap},
-    vec,
-};
+use std::collections::{btree_map, BTreeMap};
 
 use anyhow::{anyhow, Context, Result};
-use clap::{Parser, Subcommand};
+
 use etcd_client::{Client, DeleteOptions, GetOptions};
 use prost::Message;
-use redis_rs::{
-    protobuf::proxy_service::{
-        proxy_manage_service_client::ProxyManageServiceClient, ProxyNodeInfo, RedisNodeInfo,
-        SlotRange, SyncRequest,
+
+use crate::{
+    protobuf::{
+        common::SlotsMapping,
+        proxy_service::{
+            proxy_manage_service_client::ProxyManageServiceClient, ProxyNodeInfo, RedisNodeInfo,
+            SlotRange, SyncRequest,
+        },
     },
-    service::proxy_service::SLOTS_LENGTH,
-    PROXY_NODE_ID_PREFIX, REDIS_NODE_ID_PREFIX,
+    PROXY_NODE_ID_PREFIX, REDIS_NODE_ID_PREFIX, SLOTS_LENGTH, SLOTS_MAPPING,
 };
 use tonic::Request;
 
-#[derive(Debug, Parser)]
-#[command(name = "manage client")]
-struct Cli {
-    etcd_addr: String,
-    #[command(subcommand)]
-    sub_cmd: Cmd,
-}
-
-#[derive(Debug, Subcommand, Clone)]
-enum Cmd {
-    ShowProxy,
-    ShowRedis,
-    Sync,
-    Add { id: String, addr: String },
-    Remove { id: String },
-    Other,
-}
-
-#[tokio::main]
-async fn main() -> Result<()> {
-    simple_logger::SimpleLogger::new()
-        .with_level(log::LevelFilter::Info)
-        .init()?;
-
-    let cli = Cli::parse();
-    let mut manage_client = ManageClient::new(cli.etcd_addr).await?;
-
-    match cli.sub_cmd {
-        Cmd::Add { id, addr } => {
-            log::info!(
-                "执行Add命令, 向集群中添加redis节点id: {:?}, addr: {:?}",
-                id,
-                addr
-            );
-            manage_client
-                .add_redis_node(RedisNodeInfo {
-                    id,
-                    addr,
-                    slot_range: None,
-                    slots: vec![],
-                })
-                .await?;
-        }
-
-        Cmd::Remove { id } => {
-            log::info!("执行Remove命令, 移除redis节点 id: {:?}", id);
-            manage_client.remove_redis_node(id).await?;
-        }
-
-        Cmd::ShowProxy => {
-            log::info!(
-                "执行ShowProxy命令, 展示所有代理节点信息: \n {:?}",
-                manage_client.get_proxy_node_infos().await?
-            );
-        }
-
-        Cmd::ShowRedis => {
-            log::info!(
-                "执行ShowRedis命令, 展示所有Redis节点信息: \n {:?}",
-                manage_client.get_redis_node_infos().await?
-            );
-        }
-
-        Cmd::Sync => {
-            log::info!("执行Sync命令, 把redis节点信息同步给所有代理节点");
-            let mut redis_node_infos = manage_client.get_redis_node_infos().await?;
-            manage_client
-                .sync_all_proxy_nodes(&mut redis_node_infos)
-                .await?;
-        }
-        _ => {
-            log::error!("暂时不支持的命令")
-        }
-    }
-
-    Ok(())
-}
-
-struct ManageClient {
+pub struct Dashboard {
     etcd_client: etcd_client::Client,
+    _slots_mapping: SlotsMapping,
 }
 
-impl ManageClient {
-    async fn new(etcd_service_endpoint: String) -> Result<Self> {
+impl Dashboard {
+    pub async fn new(etcd_service_endpoint: String) -> Result<Self> {
+        let mut etcd_client = Client::connect([etcd_service_endpoint], None).await?;
+        let _slots_mapping = etcd_client
+            .get(SLOTS_MAPPING, None)
+            .await?
+            .kvs()
+            .get(0)
+            .and_then(|kv| SlotsMapping::decode(kv.value()).ok())
+            .unwrap_or_else(|| SlotsMapping::init()); // 初始化为默认值
         Ok(Self {
-            etcd_client: Client::connect([etcd_service_endpoint], None).await?,
+            etcd_client,
+            _slots_mapping,
         })
     }
 
     /// 向redis集群添加一个节点
-    async fn add_redis_node(&mut self, redis_node_info: RedisNodeInfo) -> Result<()> {
+    pub async fn add_redis_node(&mut self, redis_node_info: RedisNodeInfo) -> Result<()> {
         // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
         let mut redis_node_infos = self.get_redis_node_infos().await?;
         if let btree_map::Entry::Vacant(vacant) = redis_node_infos.entry(redis_node_info.id.clone())
@@ -127,7 +59,9 @@ impl ManageClient {
         }
     }
 
-    async fn remove_redis_node(&mut self, id: String) -> Result<()> {
+    pub async fn add_redis_node_v2(&mut self, _redis_node_info: RedisNodeInfo) {}
+
+    pub async fn remove_redis_node(&mut self, id: String) -> Result<()> {
         // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
         let mut redis_node_infos = self.get_redis_node_infos().await?;
         if let Some(removed_redis_node) = redis_node_infos.remove(&id) {
@@ -147,7 +81,7 @@ impl ManageClient {
         }
     }
 
-    async fn get_proxy_node_infos(&mut self) -> Result<BTreeMap<String, ProxyNodeInfo>> {
+    pub async fn get_proxy_node_infos(&mut self) -> Result<BTreeMap<String, ProxyNodeInfo>> {
         self.etcd_client
             .get(PROXY_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
             .await?
@@ -179,7 +113,7 @@ impl ManageClient {
         Ok(())
     }
 
-    async fn get_redis_node_infos(&mut self) -> Result<BTreeMap<String, RedisNodeInfo>> {
+    pub async fn get_redis_node_infos(&mut self) -> Result<BTreeMap<String, RedisNodeInfo>> {
         self.etcd_client
             .get(REDIS_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
             .await?
@@ -193,7 +127,7 @@ impl ManageClient {
             .collect::<Result<BTreeMap<String, RedisNodeInfo>>>()
     }
 
-    async fn sync_all_proxy_nodes(
+    pub async fn sync_all_proxy_nodes(
         &mut self,
         redis_node_infos: &BTreeMap<String, RedisNodeInfo>,
     ) -> Result<()> {

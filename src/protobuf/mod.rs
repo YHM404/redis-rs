@@ -1,7 +1,14 @@
 use std::ops::Range;
 
-use self::{proxy_service::SlotRange, redis_service::Entry};
+use crate::SLOTS_LENGTH;
 
+use self::{
+    common::{slot::State, Slot, SlotsMapping},
+    proxy_service::SlotRange,
+    redis_service::Entry,
+};
+
+pub mod common;
 pub mod proxy_service;
 pub mod redis_service;
 
@@ -16,6 +23,23 @@ impl From<SlotRange> for Range<usize> {
         Range {
             start: range.start as usize,
             end: range.end as usize,
+        }
+    }
+}
+
+impl SlotsMapping {
+    pub fn init() -> Self {
+        Self {
+            slots: vec![Slot::init(); SLOTS_LENGTH],
+        }
+    }
+}
+
+impl Slot {
+    fn init() -> Self {
+        Self {
+            id: Default::default(),
+            state: State::Unallocated.into(),
         }
     }
 }

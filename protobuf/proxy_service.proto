@@ -4,52 +4,62 @@ package proxy_service;
 
 import "google/protobuf/Empty.proto";
 
-
-
 // 用于表示一个redis节点中被分配的slot的范围，左闭右开区间
 message SlotRange {
-    uint64 start = 1;
-    uint64 end = 2;
+  uint64 start = 1;
+  uint64 end = 2;
+}
+
+// 记录Slots的id以及状态
+message SlotsMapping {
+  repeated Slot slots = 1;
 }
 
 // 用于表示一个redis节点中被分配的slot
 message Slot {
-    uint64 id = 1;
+  enum State {
+    // 表示SLOT此时被锁定，不能读写
+    PENDING = 0;
+    // 表示SLOT此时正在迁移中，只能读不能写
+    MIGRATING = 1;
+    // 表示SLOT此时迁移已经完成，可以读写
+    FINISHED = 2;
+  }
+  uint64 id = 1;
 }
 
 // 表示一个redis节点的信息
 message RedisNodeInfo {
-    string id = 1;
-    string addr = 2;
-    SlotRange slot_range = 3;
-    repeated Slot slots = 4;
+  string id = 1;
+  string addr = 2;
+  SlotRange slot_range = 3;
+  repeated Slot slots = 4;
 }
 
 message ProxyNodeInfo {
-    string id = 1;
-    string addr = 2;
+  string id = 1;
+  string addr = 2;
 }
 
 message SyncRequest {
-    repeated RedisNodeInfo redis_node_infos = 1;
+  repeated RedisNodeInfo redis_node_infos = 1;
 }
 
 enum State {
-    EXPIRED = 0;
-    SYNCED = 1;
+  EXPIRED = 0;
+  SYNCED = 1;
 }
 
 message GetStateResponse {
-    State state = 1;
+  State state = 1;
 }
 
 // 代理节点对外暴露的服务接口
 service ProxyManageService {
-    // 将Proxy节点设置为过期状态
-    rpc expired(google.protobuf.Empty) returns (google.protobuf.Empty);  
-    // 更新集群的redis节点的信息
-    rpc sync(SyncRequest) returns (google.protobuf.Empty);
-    // 获取Proxy节点当前的状态
-    rpc get_state(google.protobuf.Empty) returns (GetStateResponse);
+  // 将Proxy节点设置为过期状态
+  rpc Expired(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // 更新集群的redis节点的信息
+  rpc Sync(SyncRequest) returns (google.protobuf.Empty);
+  // 获取Proxy节点当前的状态
+  rpc GetState(google.protobuf.Empty) returns (GetStateResponse);
 }
-

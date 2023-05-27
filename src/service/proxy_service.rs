@@ -9,19 +9,20 @@ use tonic::{
     Request, Response, Status,
 };
 
-use crate::protobuf::{
-    proxy_service::{
-        proxy_manage_service_server::{ProxyManageService, ProxyManageServiceServer},
-        GetStateResponse, RedisNodeInfo, State, SyncRequest,
+use crate::{
+    protobuf::{
+        proxy_service::{
+            proxy_manage_service_server::{ProxyManageService, ProxyManageServiceServer},
+            GetStateResponse, RedisNodeInfo, State, SyncRequest,
+        },
+        redis_service::{
+            redis_service_client::RedisServiceClient,
+            redis_service_server::{RedisService, RedisServiceServer},
+            GetRequest, GetResponse, RemoveRequest, RemoveResponse, SetRequest, SetResponse,
+        },
     },
-    redis_service::{
-        redis_service_client::RedisServiceClient,
-        redis_service_server::{RedisService, RedisServiceServer},
-        GetRequest, GetResponse, RemoveRequest, RemoveResponse, SetRequest, SetResponse,
-    },
+    SLOTS_LENGTH,
 };
-
-pub const SLOTS_LENGTH: usize = 1024;
 
 #[derive(Debug, Clone)]
 struct Slot {

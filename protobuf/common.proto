@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package common;
+
+message Endpoint {
+  enum Scheme {
+    HTTP = 0;
+    HTTPS = 1;
+  }
+
+  Scheme scheme = 1;
+  string host = 2;
+  uint32 port = 3;
+}
+
+// 记录Slots的id以及状态
+message SlotsMapping {
+  repeated Slot slots = 1;
+}
+
+// 用于表示一个redis节点中被分配的slot
+message Slot {
+  enum State {
+    UNALLOCATED = 0;
+    // 表示SLOT此时被锁定，不能读写
+    PENDING = 1;
+    // 表示SLOT此时正在迁移中，只能读不能写
+    MIGRATING = 2;
+    // 表示SLOT此时迁移已经完成，可以读写
+    FINISHED = 3;
+  }
+  // 迁移数据的路由
+  message MigrateRoute {
+    Endpoint from = 1;
+    Endpoint to = 2;
+  }
+  string id = 1;
+
+  State state = 2;
+}
