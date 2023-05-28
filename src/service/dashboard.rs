@@ -13,12 +13,16 @@ use crate::{
             SlotRange, SyncRequest,
         },
     },
+    utils::get_redis_infos_from_etcd,
     PROXY_NODE_ID_PREFIX, REDIS_NODE_ID_PREFIX, SLOTS_LENGTH, SLOTS_MAPPING,
 };
 use tonic::Request;
 
 pub struct Dashboard {
     etcd_client: etcd_client::Client,
+
+    pub redis_infos: BTreeMap<String, RedisNodeInfo>,
+
     _slots_mapping: SlotsMapping,
 }
 
@@ -32,8 +36,10 @@ impl Dashboard {
             .get(0)
             .and_then(|kv| SlotsMapping::decode(kv.value()).ok())
             .unwrap_or_else(|| SlotsMapping::init()); // 初始化为默认值
+        let redis_infos = get_redis_infos_from_etcd(&mut etcd_client).await?;
         Ok(Self {
             etcd_client,
+            redis_infos,
             _slots_mapping,
         })
     }
@@ -41,13 +47,13 @@ impl Dashboard {
     /// 向redis集群添加一个节点
     pub async fn add_redis_node(&mut self, redis_node_info: RedisNodeInfo) -> Result<()> {
         // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
-        let mut redis_node_infos = self.get_redis_node_infos().await?;
+        let mut redis_node_infos = get_redis_infos_from_etcd(&mut self.etcd_client).await?;
         if let btree_map::Entry::Vacant(vacant) = redis_node_infos.entry(redis_node_info.id.clone())
         {
             vacant.insert(redis_node_info);
             reallocate_slots(&mut redis_node_infos)?;
 
-            self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
+            self.sync_all_proxy_nodes().await?;
 
             log::info!(
                 "成功注册新的redis节点, 当前集群redis节点信息: {:?}",
@@ -59,12 +65,12 @@ impl Dashboard {
         }
     }
 
-    pub async fn add_redis_node_v2(&mut self, _redis_node_info: RedisNodeInfo) {}
+    pub async fn add_redis_node_v2(&mut self, _redis_node_info: RedisNodeInfo) -> Result<()> {
+        todo!()
+    }
 
     pub async fn remove_redis_node(&mut self, id: String) -> Result<()> {
-        // 获取所有redis节点信息，并对slot进行再分配后重新注册到etcd
-        let mut redis_node_infos = self.get_redis_node_infos().await?;
-        if let Some(removed_redis_node) = redis_node_infos.remove(&id) {
+        if let Some(removed_redis_node) = self.redis_infos.remove(&id) {
             self.etcd_client
                 .delete(
                     format!("{}:{}", REDIS_NODE_ID_PREFIX, id),
@@ -72,8 +78,8 @@ impl Dashboard {
                 )
                 .await?;
 
-            reallocate_slots(&mut redis_node_infos)?;
-            self.sync_all_proxy_nodes(&mut redis_node_infos).await?;
+            reallocate_slots(&mut self.redis_infos)?;
+            self.sync_all_proxy_nodes().await?;
             log::info!("redis节点已经从集群中移除: {:?}", removed_redis_node);
             Ok(())
         } else {
@@ -96,11 +102,8 @@ impl Dashboard {
             .collect::<Result<BTreeMap<String, ProxyNodeInfo>>>()
     }
 
-    async fn register_redis_nodes(
-        &mut self,
-        redis_node_infos: &BTreeMap<String, RedisNodeInfo>,
-    ) -> Result<()> {
-        for (_, redis_node_info) in redis_node_infos {
+    async fn register_redis_nodes(&mut self) -> Result<()> {
+        for (_, redis_node_info) in &self.redis_infos {
             let node_id = redis_node_info.id.clone();
             self.etcd_client
                 .put(
@@ -113,24 +116,7 @@ impl Dashboard {
         Ok(())
     }
 
-    pub async fn get_redis_node_infos(&mut self) -> Result<BTreeMap<String, RedisNodeInfo>> {
-        self.etcd_client
-            .get(REDIS_NODE_ID_PREFIX, Some(GetOptions::new().with_prefix()))
-            .await?
-            .kvs()
-            .into_iter()
-            .map(|kv| {
-                let redis_node_info =
-                    RedisNodeInfo::decode(kv.value()).context("RedisNodeInfo反序列化错误")?;
-                Ok((redis_node_info.id.clone(), redis_node_info))
-            })
-            .collect::<Result<BTreeMap<String, RedisNodeInfo>>>()
-    }
-
-    pub async fn sync_all_proxy_nodes(
-        &mut self,
-        redis_node_infos: &BTreeMap<String, RedisNodeInfo>,
-    ) -> Result<()> {
+    pub async fn sync_all_proxy_nodes(&mut self) -> Result<()> {
         let proxy_node_infos = self.get_proxy_node_infos().await?;
         // 向所有代理节点广播Expired通知
         let mut proxy_clients = Vec::with_capacity(proxy_node_infos.len());
@@ -141,13 +127,13 @@ impl Dashboard {
             proxy_clients.push(proxy_client);
         }
 
-        self.register_redis_nodes(redis_node_infos).await?;
+        self.register_redis_nodes().await?;
 
         // 向所有代理节点广播Sync请求
         for proxy_client in proxy_clients.iter_mut() {
             proxy_client
                 .sync(Request::new(SyncRequest {
-                    redis_node_infos: redis_node_infos.clone().into_values().collect(),
+                    redis_node_infos: self.redis_infos.clone().into_values().collect(),
                 }))
                 .await?;
         }

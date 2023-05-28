@@ -10,30 +10,11 @@ message SlotRange {
   uint64 end = 2;
 }
 
-// 记录Slots的id以及状态
-message SlotsMapping {
-  repeated Slot slots = 1;
-}
-
-// 用于表示一个redis节点中被分配的slot
-message Slot {
-  enum State {
-    // 表示SLOT此时被锁定，不能读写
-    PENDING = 0;
-    // 表示SLOT此时正在迁移中，只能读不能写
-    MIGRATING = 1;
-    // 表示SLOT此时迁移已经完成，可以读写
-    FINISHED = 2;
-  }
-  uint64 id = 1;
-}
-
 // 表示一个redis节点的信息
 message RedisNodeInfo {
   string id = 1;
   string addr = 2;
   SlotRange slot_range = 3;
-  repeated Slot slots = 4;
 }
 
 message ProxyNodeInfo {

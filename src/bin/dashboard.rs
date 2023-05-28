@@ -41,7 +41,6 @@ async fn main() -> Result<()> {
                     id,
                     addr,
                     slot_range: None,
-                    slots: vec![],
                 })
                 .await?;
         }
@@ -61,16 +60,13 @@ async fn main() -> Result<()> {
         Cmd::ShowRedis => {
             log::info!(
                 "执行ShowRedis命令, 展示所有Redis节点信息: \n {:?}",
-                dashboard.get_redis_node_infos().await?
+                dashboard.redis_infos
             );
         }
 
         Cmd::Sync => {
             log::info!("执行Sync命令, 把redis节点信息同步给所有代理节点");
-            let mut redis_node_infos = dashboard.get_redis_node_infos().await?;
-            dashboard
-                .sync_all_proxy_nodes(&mut redis_node_infos)
-                .await?;
+            dashboard.sync_all_proxy_nodes().await?;
         }
         _ => {
             log::error!("暂时不支持的命令")
