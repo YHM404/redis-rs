@@ -1,4 +1,7 @@
-use std::collections::{btree_map, BTreeMap};
+use std::{
+    collections::{btree_map, BTreeMap},
+    fmt::format,
+};
 
 use anyhow::{anyhow, Context, Result};
 
@@ -7,14 +10,14 @@ use prost::Message;
 
 use crate::{
     protobuf::{
-        common::SlotsMapping,
+        common::{self, slot::MigrateRoute, Slot},
         proxy_service::{
             proxy_manage_service_client::ProxyManageServiceClient, ProxyNodeInfo, RedisNodeInfo,
             SlotRange, SyncRequest,
         },
     },
-    utils::get_redis_infos_from_etcd,
-    PROXY_NODE_ID_PREFIX, REDIS_NODE_ID_PREFIX, SLOTS_LENGTH, SLOTS_MAPPING,
+    utils::{get_redis_infos_from_etcd, get_slots_mapping_from_etcd},
+    PROXY_NODE_ID_PREFIX, REDIS_NODE_ID_PREFIX, SLOTS_LENGTH,
 };
 use tonic::Request;
 
@@ -23,24 +26,24 @@ pub struct Dashboard {
 
     pub redis_infos: BTreeMap<String, RedisNodeInfo>,
 
-    _slots_mapping: SlotsMapping,
+    allocated_slots_mapping: BTreeMap<String, Vec<Slot>>,
+
+    unallocated_slots_mapping: Vec<Slot>,
 }
 
 impl Dashboard {
     pub async fn new(etcd_service_endpoint: String) -> Result<Self> {
         let mut etcd_client = Client::connect([etcd_service_endpoint], None).await?;
-        let _slots_mapping = etcd_client
-            .get(SLOTS_MAPPING, None)
-            .await?
-            .kvs()
-            .get(0)
-            .and_then(|kv| SlotsMapping::decode(kv.value()).ok())
-            .unwrap_or_else(|| SlotsMapping::init()); // 初始化为默认值
+        let (unallocated_slots_mapping, allocated_slots_mapping) =
+            get_slots_mapping_from_etcd(&mut etcd_client).await?;
+
         let redis_infos = get_redis_infos_from_etcd(&mut etcd_client).await?;
+
         Ok(Self {
             etcd_client,
             redis_infos,
-            _slots_mapping,
+            allocated_slots_mapping,
+            unallocated_slots_mapping,
         })
     }
 
@@ -65,8 +68,12 @@ impl Dashboard {
         }
     }
 
-    pub async fn add_redis_node_v2(&mut self, _redis_node_info: RedisNodeInfo) -> Result<()> {
-        todo!()
+    pub async fn add_redis_node_v2(&mut self, redis_node_info: RedisNodeInfo) -> Result<()> {
+        self.redis_infos
+            .insert(redis_node_info.id.clone(), redis_node_info);
+        // TODO: 更新slotsmapping状态....
+        let migrating_slots = self.balancing_slots()?;
+        Ok(())
     }
 
     pub async fn remove_redis_node(&mut self, id: String) -> Result<()> {
@@ -85,6 +92,88 @@ impl Dashboard {
         } else {
             Err(anyhow!("要移除的节点不存在: id = {:?}", id))
         }
+    }
+
+    // 将slot平均分配到所有redis节点, 并且返回需要迁移的slot队列
+    fn balancing_slots(&mut self) -> Result<Vec<Slot>> {
+        let redis_count = self.redis_infos.len();
+        let expected_slots_count = redis_count.div_ceil(SLOTS_LENGTH);
+
+        // TODO: MigratingRoute
+
+        // redis节点的slots超过预期分配的数量的，会将多余的slots移到unallocated_slots_mapping里
+        self.allocated_slots_mapping
+            .iter_mut()
+            .filter(|(_, slots)| slots.len() > expected_slots_count)
+            .try_for_each(|(redis_id, slots)| {
+                let mut out_slots = slots.split_off(expected_slots_count);
+                out_slots.iter_mut().try_for_each(|slot| {
+                    let from_endpoint = self
+                        .redis_infos
+                        .get(redis_id)
+                        .context(format!("redis_id: {:?} 不存在", redis_id))?
+                        .endpoint
+                        .clone()
+                        .context(format!("redis_id= {:?} 的 endpoint为空", redis_id))?;
+
+                    slot.migrate_route = Some(MigrateRoute {
+                        from: Some(from_endpoint),
+                        to: None,
+                    });
+                    anyhow::Ok(())
+                })?;
+                self.unallocated_slots_mapping.extend(out_slots);
+                anyhow::Ok(())
+            })?;
+
+        let mut migrating_slots = Vec::with_capacity(self.unallocated_slots_mapping.len());
+
+        // redis节点的slots不足预期分配的数量的，会将从unallocated_slots_mappping里补足
+        self.allocated_slots_mapping
+            .values_mut()
+            .filter(|slots| slots.len() < expected_slots_count)
+            .try_for_each(|slots| {
+                // safe assert
+                assert!(expected_slots_count > slots.len());
+
+                // 还差多少个slots才符合预期
+                let in_number = expected_slots_count - slots.len();
+                // 分配in_number个slots
+                let mut in_slots = self
+                    .unallocated_slots_mapping
+                    .split_off(self.unallocated_slots_mapping.len() - in_number);
+
+                in_slots.iter_mut().try_for_each(|slot| {
+                    let to_endpoint = self
+                        .redis_infos
+                        .get(&slot.redis_id)
+                        .context(format!("redis_id: {:?} 不存在", slot.redis_id))?
+                        .endpoint
+                        .clone();
+                    if slot.migrate_route.is_none() {
+                        slot.migrate_route = Some(MigrateRoute {
+                            from: None,
+                            to: to_endpoint,
+                        });
+                    } else {
+                        slot.migrate_route
+                            .as_mut()
+                            .map(|route| route.to = to_endpoint);
+                    };
+                    // 需要迁移的slot状态要设置为Pending, 设置为Pending时，该slot只能读不能写
+                    slot.set_state(common::slot::State::Pending);
+
+                    // 把该slot加到待迁移队列里
+                    migrating_slots.push(slot.clone());
+
+                    anyhow::Ok(())
+                })?;
+
+                slots.extend(in_slots);
+
+                anyhow::Ok(())
+            })?;
+        Ok(migrating_slots)
     }
 
     pub async fn get_proxy_node_infos(&mut self) -> Result<BTreeMap<String, ProxyNodeInfo>> {
@@ -139,6 +228,10 @@ impl Dashboard {
         }
         Ok(())
     }
+}
+
+struct MigratingSlots {
+    slots: Vec<Slot>,
 }
 
 /// 计算redis_nodes应该存放那些slot

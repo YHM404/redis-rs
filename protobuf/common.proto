@@ -34,7 +34,15 @@ message Slot {
     Endpoint from = 1;
     Endpoint to = 2;
   }
-  string id = 1;
 
-  State state = 2;
+  // 表示slot的唯一编号 [0, 1024)
+  uint32 id = 1;
+
+  // 表示slot所在的redis节点的id
+  string redis_id = 2;
+
+  // 表示节点当前的状态
+  State state = 3;
+
+  MigrateRoute migrate_route = 4;
 }

@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package proxy_service;
 
+import "common.proto";
 import "google/protobuf/Empty.proto";
 
 // 用于表示一个redis节点中被分配的slot的范围，左闭右开区间
@@ -13,7 +14,7 @@ message SlotRange {
 // 表示一个redis节点的信息
 message RedisNodeInfo {
   string id = 1;
-  string addr = 2;
+  common.Endpoint endpoint = 2;
   SlotRange slot_range = 3;
 }
 

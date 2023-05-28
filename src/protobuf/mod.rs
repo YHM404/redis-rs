@@ -1,9 +1,12 @@
 use std::ops::Range;
 
+use anyhow::{anyhow, Context};
+use url::Url;
+
 use crate::SLOTS_LENGTH;
 
 use self::{
-    common::{slot::State, Slot, SlotsMapping},
+    common::{endpoint::Scheme, slot::State, Endpoint, Slot, SlotsMapping},
     proxy_service::SlotRange,
     redis_service::Entry,
 };
@@ -38,8 +41,37 @@ impl SlotsMapping {
 impl Slot {
     fn init() -> Self {
         Self {
-            id: Default::default(),
             state: State::Unallocated.into(),
+            ..Default::default()
         }
+    }
+}
+
+impl ToString for Endpoint {
+    fn to_string(&self) -> String {
+        format!(
+            "{}://{}/{}",
+            self.scheme().as_str_name().to_lowercase(),
+            self.host,
+            self.port,
+        )
+    }
+}
+
+impl TryFrom<Url> for Endpoint {
+    type Error = anyhow::Error;
+
+    fn try_from(url: Url) -> Result<Self, Self::Error> {
+        let scheme = match url.scheme() {
+            "http" => Scheme::Http,
+            "https" => Scheme::Https,
+            _ => return Err(anyhow!("不支持的scheme")),
+        };
+
+        Ok(Endpoint {
+            scheme: scheme.into(),
+            host: url.host_str().context("host为空")?.to_string(),
+            port: url.port().context("port为空")? as u32,
+        })
     }
 }

@@ -1,6 +1,7 @@
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 use redis_rs::{protobuf::proxy_service::RedisNodeInfo, service::dashboard::Dashboard};
+use url::Url;
 
 #[derive(Debug, Parser)]
 #[command(name = "manage client")]
@@ -36,10 +37,11 @@ async fn main() -> Result<()> {
                 id,
                 addr
             );
+            let url = Url::parse(&addr)?;
             dashboard
                 .add_redis_node(RedisNodeInfo {
                     id,
-                    addr,
+                    endpoint: Some(url.try_into()?),
                     slot_range: None,
                 })
                 .await?;

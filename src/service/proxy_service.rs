@@ -63,8 +63,8 @@ impl Router {
             let slot_range = redis_node_info
                 .slot_range
                 .ok_or_else(|| Status::invalid_argument("SlotRange为空"))?;
-            let RedisNodeInfo { id, addr, .. } = redis_node_info;
-            let channel = Endpoint::new(addr)
+            let RedisNodeInfo { id, endpoint, .. } = redis_node_info;
+            let channel = Endpoint::new(endpoint.context("endpoint为空")?.to_string())
                 .or(Err(Status::unavailable("与redis节点建立Channel失败")))?
                 .connect_lazy();
             self.redis_channels.insert(id.clone(), channel);
