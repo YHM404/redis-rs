@@ -1,7 +1,4 @@
-use std::{
-    collections::{btree_map, BTreeMap},
-    fmt::format,
-};
+use std::collections::{btree_map, BTreeMap};
 
 use anyhow::{anyhow, Context, Result};
 
@@ -10,7 +7,7 @@ use prost::Message;
 
 use crate::{
     protobuf::{
-        common::{self, slot::MigrateRoute, Slot},
+        common::{self, slot::MigrateRoute, Endpoint, Slot},
         proxy_service::{
             proxy_manage_service_client::ProxyManageServiceClient, ProxyNodeInfo, RedisNodeInfo,
             SlotRange, SyncRequest,
@@ -72,7 +69,8 @@ impl Dashboard {
         self.redis_infos
             .insert(redis_node_info.id.clone(), redis_node_info);
         // TODO: 更新slotsmapping状态....
-        let migrating_slots = self.balancing_slots()?;
+        let _migrating_slots = self.balancing_slots()?;
+
         Ok(())
     }
 
@@ -95,7 +93,7 @@ impl Dashboard {
     }
 
     // 将slot平均分配到所有redis节点, 并且返回需要迁移的slot队列
-    fn balancing_slots(&mut self) -> Result<Vec<Slot>> {
+    fn balancing_slots(&mut self) -> Result<MigratingSlots> {
         let redis_count = self.redis_infos.len();
         let expected_slots_count = redis_count.div_ceil(SLOTS_LENGTH);
 
@@ -108,18 +106,12 @@ impl Dashboard {
             .try_for_each(|(redis_id, slots)| {
                 let mut out_slots = slots.split_off(expected_slots_count);
                 out_slots.iter_mut().try_for_each(|slot| {
-                    let from_endpoint = self
-                        .redis_infos
-                        .get(redis_id)
-                        .context(format!("redis_id: {:?} 不存在", redis_id))?
-                        .endpoint
-                        .clone()
-                        .context(format!("redis_id= {:?} 的 endpoint为空", redis_id))?;
-
+                    let from_endpoint = get_redis_endpoint(&self.redis_infos, &redis_id)?;
                     slot.migrate_route = Some(MigrateRoute {
                         from: Some(from_endpoint),
                         to: None,
                     });
+                    slot.set_state(common::slot::State::Unallocated);
                     anyhow::Ok(())
                 })?;
                 self.unallocated_slots_mapping.extend(out_slots);
@@ -144,21 +136,16 @@ impl Dashboard {
                     .split_off(self.unallocated_slots_mapping.len() - in_number);
 
                 in_slots.iter_mut().try_for_each(|slot| {
-                    let to_endpoint = self
-                        .redis_infos
-                        .get(&slot.redis_id)
-                        .context(format!("redis_id: {:?} 不存在", slot.redis_id))?
-                        .endpoint
-                        .clone();
+                    let to_endpoint = get_redis_endpoint(&self.redis_infos, &slot.redis_id)?;
                     if slot.migrate_route.is_none() {
                         slot.migrate_route = Some(MigrateRoute {
                             from: None,
-                            to: to_endpoint,
+                            to: Some(to_endpoint),
                         });
                     } else {
                         slot.migrate_route
                             .as_mut()
-                            .map(|route| route.to = to_endpoint);
+                            .map(|route| route.to = Some(to_endpoint));
                     };
                     // 需要迁移的slot状态要设置为Pending, 设置为Pending时，该slot只能读不能写
                     slot.set_state(common::slot::State::Pending);
@@ -173,7 +160,9 @@ impl Dashboard {
 
                 anyhow::Ok(())
             })?;
-        Ok(migrating_slots)
+        Ok(MigratingSlots {
+            _slots: migrating_slots,
+        })
     }
 
     pub async fn get_proxy_node_infos(&mut self) -> Result<BTreeMap<String, ProxyNodeInfo>> {
@@ -230,8 +219,20 @@ impl Dashboard {
     }
 }
 
+fn get_redis_endpoint(
+    redis_infos: &BTreeMap<String, RedisNodeInfo>,
+    redis_id: &str,
+) -> Result<Endpoint> {
+    Ok(redis_infos
+        .get(redis_id)
+        .context(format!("redis_id: {:?} 不存在", redis_id))?
+        .endpoint
+        .clone()
+        .context(format!("redis_id: {:?} 的endpoint为空", redis_id))?)
+}
+
 struct MigratingSlots {
-    slots: Vec<Slot>,
+    _slots: Vec<Slot>,
 }
 
 /// 计算redis_nodes应该存放那些slot

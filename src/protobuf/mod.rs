@@ -32,15 +32,22 @@ impl From<SlotRange> for Range<usize> {
 
 impl SlotsMapping {
     pub fn init() -> Self {
-        Self {
-            slots: vec![Slot::init(); SLOTS_LENGTH],
-        }
+        let slots = (0..SLOTS_LENGTH).into_iter().fold(
+            Vec::with_capacity(SLOTS_LENGTH),
+            |mut slots, id| {
+                slots.push(Slot::init(id as u32));
+                slots
+            },
+        );
+
+        SlotsMapping { slots }
     }
 }
 
 impl Slot {
-    fn init() -> Self {
+    fn init(id: u32) -> Self {
         Self {
+            id,
             state: State::Unallocated.into(),
             ..Default::default()
         }
